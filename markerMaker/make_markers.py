@@ -9,6 +9,7 @@ from scipy import ndimage
 from skimage import measure
 from skimage.morphology import erosion, disk, dilation, erosion, reconstruction
 import argparse
+from utils.progress_bar import progress_bar
 
 # Default directory names if not specified
 DEFAULT_INPUT_DIR = 'markers'
@@ -17,21 +18,28 @@ DEFAULT_OUTPUT_DIR = 'markers'
 DEFAULT_SIMPLIFICATION_METHOD = 'ultimate_erosion'
 simplification_method  = DEFAULT_SIMPLIFICATION_METHOD
 
+method_names = {
+    'ue': 'ultimate_erosion',
+    'skel': 'skeletization'
+}
+
 # -----------------------------------Generating Markers-----------------------------------------
-def generate_markers(dataset, output_dir_name):
-    if not os.path.isdir(output_dir_name):
-        os.mkdir(output_dir_name)
-    for datapoint in dataset:
+def generate_markers(dataset, output_dir):
+    dataset_len = len(dataset)
+    if not os.path.isdir(output_dir):
+        os.mkdir(output_dir)
+    for i, datapoint in enumerate(dataset):
         datapoint['image'] = datapoint['image'].astype('uint8')
-        saveScribbles(datapoint["filename"], datapoint["image"])
+        saveScribbles(datapoint["filename"], datapoint["image"], output_dir)
+        progress_bar(i + 1, dataset_len)
+    print()
 
 def getMarkers(src_marker):
     markers = []
     objMarkers = 0
     markers_sizes = []
     getBackground(src_marker)
-    width, height, channels = src_marker.shape
-    
+
     image, number_of_objects = ndimage.label(src_marker[:,:,2])
     blobs = ndimage.find_objects(image)
     for i, j in enumerate(blobs):
@@ -70,13 +78,13 @@ def getBackground(src_marker):
             else:
                 src_marker[i,j,0] = 0
 
-def saveScribbles(filename, src_marker):
+def saveScribbles(filename, src_marker, output_dir):
     src_marker = cv2.cvtColor(src_marker, cv2.COLOR_GRAY2RGB)
     markers, objMarkers, markers_sizes = getMarkers(src_marker)
     if(len(markers) == 0): 
         return
     
-    f = open(DEFAULT_OUTPUT_DIR+"/"+os.path.splitext(filename)[0]+".txt", 'w')
+    f = open(output_dir+"/"+os.path.splitext(filename)[0]+".txt", 'w')
     f.write("%d\n"%(len(markers_sizes)))
     f.write("%d\n"%(markers_sizes[0]))
 
@@ -143,25 +151,31 @@ def generate_erosion_mask(input_img):
 
 def erode(dataset, save_simplification, output_dir):
     eroded_dataset = []
-    for datapoint in dataset:
+    dataset_len = len(dataset)
+    for i, datapoint in enumerate(dataset):
         img = datapoint['image']
         eroded_image = ultimate_erosion(img, 1)
         eroded_dataset.append({"filename": datapoint['filename'], "image": eroded_image})
-        if save_simplification:
-            save_simplification_list(eroded_dataset, output_dir)
+        progress_bar(i + 1, dataset_len)
+    print()
+    if save_simplification:
+        save_simplification_list(eroded_dataset, output_dir)
     return eroded_dataset
 
 def skeletonize(dataset, save_simplification, output_dir):
-      skeletons = []
-      for datapoint in dataset:
+    skeletons = []
+    dataset_len = len(dataset)
+    for i, datapoint in enumerate(dataset):
         img = datapoint['image']
         img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         ret, img = cv2.threshold(img, 127, 255, cv2.THRESH_BINARY)
         skeleton = cv2.ximgproc.thinning(img, None, cv2.ximgproc.THINNING_ZHANGSUEN)
         skeletons.append({"filename": datapoint['filename'], "image": skeleton})
-        if save_simplification:
-            save_simplification_list(skeletons, output_dir)
-      return skeletons
+        progress_bar(i + 1, dataset_len)
+    print()
+    if save_simplification:
+        save_simplification_list(skeletons, output_dir)
+    return skeletons
 
 def read_dataset(input_dir):
     dataset = []
@@ -178,25 +192,27 @@ def save_simplification_list(simplified_images, output_dir):
         cv2.imwrite('./' + output_dir + "/" + output_filename, skeleton["image"])
 
 def make_markers(input_dir, output_dir, save_simplification, simplification_dir):
-  dataset = read_dataset(input_dir)
-  print('Simplifying image...')
-  #simplifications = skeletonize(dataset, save_simplification, simplification_dir)
-  simplifications = erode(dataset, save_simplification, simplification_dir)
-  print('Generating markers...')
-  generate_markers(simplifications, output_dir)
+    dataset = read_dataset(input_dir)
+    print('*** Simplifying images ***')
+    if simplification_method == method_names['skel']:
+        simplifications = skeletonize(dataset, save_simplification, simplification_dir)
+    else:
+        simplifications = erode(dataset, save_simplification, simplification_dir)
+    print('*** Generating markers ***')
+    generate_markers(simplifications, output_dir)
 
 def setup_arguments(parser):
-   parser.add_argument('--input_dir', help='Path to the folder where the input images are located.')
-   parser.add_argument('--output_dir', help='Path to the folder where the output markers will be located.', default=DEFAULT_OUTPUT_DIR)
-   parser.add_argument('--save_simplifications', help='Type y to save the skeletons of the image', default = 'N')
-   parser.add_argument('--simplification_dir', help='Path to the folder where the output skeletons will be located.', default=DEFAULT_SIMPLIFICATION_DIR)
-   parser.add_argument('--simplification_method', help='Method used to simplify the images.', default=DEFAULT_SIMPLIFICATION_METHOD)
+    parser.add_argument('--input_dir', help='Path to the folder where the input images are located.')
+    parser.add_argument('--output_dir', help='Path to the folder where the output markers will be located.', default=DEFAULT_OUTPUT_DIR)
+    parser.add_argument('--save_simplifications', help='Type y to save the skeletons of the image', default = 'N')
+    parser.add_argument('--simplification_dir', help='Path to the folder where the output simplifications will be located.', default=DEFAULT_SIMPLIFICATION_DIR)
+    parser.add_argument('--simplification_method', help='Method used to simplify the images.', default=DEFAULT_SIMPLIFICATION_METHOD)
 
 def arguments_validated(args):
-  if(args.input_dir == None):
-      print('Argument Invalid, the input folder path must not be empty!')
-      return False
-  return True
+    if(args.input_dir == None):
+        print('Argument Invalid, the input folder path must not be empty!')
+        return False
+    return True
 
 if __name__ == '__main__':
   acceptable_words = ['yes', 'y', 'sim', 'positive', 't', 'true']
@@ -207,6 +223,8 @@ if __name__ == '__main__':
   if(arguments_validated(args)):
     input_dir = args.input_dir
     output_dir = args.output_dir
+    if args.simplification_method.lower()  == 'skel':
+        simplification_method =  method_names['skel'] 
     save_simplification = args.save_simplifications.lower() in acceptable_words
     simplification_dir = args.simplification_dir
     make_markers(input_dir, output_dir, save_simplification, simplification_dir)
